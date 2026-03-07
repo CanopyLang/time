@@ -1,0 +1,170 @@
+module Test.Time exposing (main, tests)
+
+import Basics exposing (..)
+import Time exposing (..)
+import Test exposing (..)
+import Expect
+
+
+main : Test
+main =
+    tests
+
+
+tests : Test
+tests =
+    describe "Time Tests"
+        [ posixConversionTests
+        , utcExtractionTests
+        , monthTests
+        , weekdayTests
+        , customZoneTests
+        ]
+
+
+
+-- POSIX CONVERSION
+
+
+posixConversionTests : Test
+posixConversionTests =
+    describe "Posix Conversion"
+        [ test "posixToMillis and millisToPosix round-trip" <|
+            \() -> Expect.equal 0 (posixToMillis (millisToPosix 0))
+        , test "round-trip with positive value" <|
+            \() -> Expect.equal 1234567890 (posixToMillis (millisToPosix 1234567890))
+        , test "round-trip with large value" <|
+            \() -> Expect.equal 1709222400000 (posixToMillis (millisToPosix 1709222400000))
+        , test "epoch is zero" <|
+            \() -> Expect.equal 0 (posixToMillis (millisToPosix 0))
+        ]
+
+
+
+-- UTC EXTRACTION
+-- Reference: 2024-02-29 15:30:45.123 UTC = 1709220645123 ms since epoch
+
+
+utcExtractionTests : Test
+utcExtractionTests =
+    let
+        -- 2024-02-29 15:30:45.123 UTC
+        time = millisToPosix 1709220645123
+    in
+    describe "UTC Time Extraction"
+        [ test "toYear UTC" <|
+            \() -> Expect.equal 2024 (toYear utc time)
+        , test "toMonth UTC" <|
+            \() -> Expect.equal Feb (toMonth utc time)
+        , test "toDay UTC" <|
+            \() -> Expect.equal 29 (toDay utc time)
+        , test "toWeekday UTC" <|
+            \() -> Expect.equal Thu (toWeekday utc time)
+        , test "toHour UTC" <|
+            \() -> Expect.equal 15 (toHour utc time)
+        , test "toMinute UTC" <|
+            \() -> Expect.equal 30 (toMinute utc time)
+        , test "toSecond UTC" <|
+            \() -> Expect.equal 45 (toSecond utc time)
+        , test "toMillis UTC" <|
+            \() -> Expect.equal 123 (toMillis utc time)
+        , describe "epoch extraction"
+            [ test "epoch year" <|
+                \() -> Expect.equal 1970 (toYear utc (millisToPosix 0))
+            , test "epoch month" <|
+                \() -> Expect.equal Jan (toMonth utc (millisToPosix 0))
+            , test "epoch day" <|
+                \() -> Expect.equal 1 (toDay utc (millisToPosix 0))
+            , test "epoch weekday" <|
+                \() -> Expect.equal Thu (toWeekday utc (millisToPosix 0))
+            , test "epoch hour" <|
+                \() -> Expect.equal 0 (toHour utc (millisToPosix 0))
+            ]
+        , describe "end of year"
+            (let
+                -- 2023-12-31 23:59:59.999 UTC
+                endOfYear = millisToPosix 1704067199999
+             in
+             [ test "year" <|
+                \() -> Expect.equal 2023 (toYear utc endOfYear)
+             , test "month" <|
+                \() -> Expect.equal Dec (toMonth utc endOfYear)
+             , test "day" <|
+                \() -> Expect.equal 31 (toDay utc endOfYear)
+             , test "hour" <|
+                \() -> Expect.equal 23 (toHour utc endOfYear)
+             , test "minute" <|
+                \() -> Expect.equal 59 (toMinute utc endOfYear)
+             , test "second" <|
+                \() -> Expect.equal 59 (toSecond utc endOfYear)
+             ]
+            )
+        ]
+
+
+
+-- MONTH AND WEEKDAY
+
+
+monthTests : Test
+monthTests =
+    describe "Month type coverage"
+        [ test "Jan through Dec are distinct" <|
+            \() ->
+                let
+                    months = [Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec]
+                in
+                Expect.equal 12 (List.length months)
+        ]
+
+
+weekdayTests : Test
+weekdayTests =
+    describe "Weekday type coverage"
+        [ test "Mon through Sun are distinct" <|
+            \() ->
+                let
+                    days = [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+                in
+                Expect.equal 7 (List.length days)
+        , describe "known weekdays"
+            [ test "2024-01-01 is Monday" <|
+                \() -> Expect.equal Mon (toWeekday utc (millisToPosix 1704067200000))
+            , test "2024-01-06 is Saturday" <|
+                \() -> Expect.equal Sat (toWeekday utc (millisToPosix 1704499200000))
+            , test "2024-01-07 is Sunday" <|
+                \() -> Expect.equal Sun (toWeekday utc (millisToPosix 1704585600000))
+            ]
+        ]
+
+
+
+-- CUSTOM ZONE
+
+
+customZoneTests : Test
+customZoneTests =
+    let
+        -- UTC+5:30 (India Standard Time)
+        ist = customZone 330 []
+
+        -- 2024-02-29 15:30:45 UTC = 2024-02-29 21:00:45 IST
+        time = millisToPosix 1709220645000
+    in
+    describe "Custom Zone"
+        [ test "IST hour (UTC+5:30)" <|
+            \() -> Expect.equal 21 (toHour ist time)
+        , test "IST minute" <|
+            \() -> Expect.equal 0 (toMinute ist time)
+        , describe "negative offset"
+            (let
+                -- UTC-5 (Eastern Standard Time)
+                est = customZone -300 []
+             in
+             [ test "EST hour" <|
+                \() -> Expect.equal 10 (toHour est time)
+             , test "EST minute" <|
+                \() -> Expect.equal 30 (toMinute est time)
+             ]
+            )
+        ]
