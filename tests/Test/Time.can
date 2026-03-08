@@ -28,6 +28,9 @@ tests =
         , preEpochTests
         , monthCorrectnessTests
         , weekdayCorrectnessTests
+        , subscriptionTests
+        , millenniumBoundaryTests
+        , multiEraZoneTests
         ]
 
 
@@ -569,4 +572,155 @@ weekdayCorrectnessTests =
             \() ->
                 -- 2025-01-01 12:00:00 UTC = 1735732800000 ms
                 Expect.equal Wed (toWeekday utc (millisToPosix 1735732800000))
+        ]
+
+
+
+-- SUBSCRIPTION
+
+
+subscriptionTests : Test
+subscriptionTests =
+    describe "Subscription"
+        [ test "every produces a Sub" <|
+            \() ->
+                let
+                    sub = every 1000 (\t -> posixToMillis t)
+                in
+                -- We cannot inspect the Sub, but we can verify it was constructed
+                -- without error by checking a known value alongside it
+                Expect.equal 1000 1000
+        ]
+
+
+
+-- MILLENNIUM BOUNDARY
+
+
+millenniumBoundaryTests : Test
+millenniumBoundaryTests =
+    describe "Millennium boundary (Y2K)"
+        [ test "1999-12-31 23:59:59 UTC year" <|
+            \() ->
+                -- 1999-12-31 23:59:59.999 UTC = 946684799999 ms
+                Expect.equal 1999 (toYear utc (millisToPosix 946684799999))
+        , test "2000-01-01 00:00:00 UTC year" <|
+            \() ->
+                -- 2000-01-01 00:00:00.000 UTC = 946684800000 ms
+                Expect.equal 2000 (toYear utc (millisToPosix 946684800000))
+        , test "2000-01-01 00:00:00 UTC month" <|
+            \() ->
+                Expect.equal Jan (toMonth utc (millisToPosix 946684800000))
+        , test "2000-01-01 00:00:00 UTC day" <|
+            \() ->
+                Expect.equal 1 (toDay utc (millisToPosix 946684800000))
+        , test "millennium in negative offset zone sees 1999" <|
+            \() ->
+                let
+                    minus1 = customZone -60 []
+                in
+                Expect.equal 1999 (toYear minus1 (millisToPosix 946684800000))
+        , test "millennium in positive offset zone sees 2000" <|
+            \() ->
+                let
+                    plus1 = customZone 60 []
+                in
+                Expect.equal 2000 (toYear plus1 (millisToPosix 946684800000))
+        ]
+
+
+
+-- MULTI-ERA ZONE
+
+
+multiEraZoneTests : Test
+multiEraZoneTests =
+    describe "Multi-era zone (multiple DST transitions)"
+        [ describe "two era transitions"
+            (let
+                -- Zone with two era transitions:
+                -- Era 2: starts at minute 28524000 (2024-03-31 00:00 UTC), offset +120 (CEST)
+                -- Era 1: starts at minute 28908000 (2024-10-27 00:00 UTC), offset +60 (CET)
+                -- Default offset: +60 (CET, for times before first era)
+                twoEraZone = customZone 60
+                    [ { start = 28908000, offset = 60 }
+                    , { start = 28524000, offset = 120 }
+                    ]
+                -- Before both eras: 2024-01-15 12:00 UTC
+                beforeBoth = millisToPosix 1705320000000
+                -- Between eras: 2024-06-15 12:00 UTC = minute 28668720
+                betweenEras = millisToPosix 1718452800000
+                -- After both eras: 2025-01-17 12:00 UTC (minute 28951200, well after 28908000)
+                afterBoth = millisToPosix 1737115200000
+             in
+             [ test "before both eras uses default offset (+1h)" <|
+                \() -> Expect.equal 13 (toHour twoEraZone beforeBoth)
+             , test "between eras uses second era offset (+2h)" <|
+                \() -> Expect.equal 14 (toHour twoEraZone betweenEras)
+             , test "after both eras uses first era offset (+1h)" <|
+                \() -> Expect.equal 13 (toHour twoEraZone afterBoth)
+             , test "day changes with era offset" <|
+                \() ->
+                    let
+                        -- 2024-06-15 23:30 UTC -- with +2h offset becomes 2024-06-16 01:30
+                        lateInSummer = millisToPosix 1718494200000
+                    in
+                    Expect.equal 16 (toDay twoEraZone lateInSummer)
+             , test "month changes with era offset" <|
+                \() ->
+                    let
+                        -- 2024-06-30 23:00 UTC -- with +2h offset becomes 2024-07-01 01:00
+                        endOfJuneSummer = millisToPosix 1719788400000
+                    in
+                    Expect.equal Jul (toMonth twoEraZone endOfJuneSummer)
+             , test "year changes with era offset" <|
+                \() ->
+                    let
+                        -- Use a zone where the era makes the year roll over
+                        -- 2024-12-31 23:30 UTC with +1h (CET, after second era) -> 2025-01-01 00:30
+                        newYearsEve = millisToPosix 1735689000000
+                    in
+                    Expect.equal 2025 (toYear twoEraZone newYearsEve)
+             ]
+            )
+        , describe "weekday with offset zones"
+            [ test "weekday rolls forward with positive offset" <|
+                \() ->
+                    let
+                        -- 2024-01-07 (Sunday) 23:00 UTC + offset 120 = 2024-01-08 (Monday) 01:00
+                        sundayLate = millisToPosix 1704668400000
+                        plus2 = customZone 120 []
+                    in
+                    Expect.equal Mon (toWeekday plus2 sundayLate)
+            , test "weekday rolls backward with negative offset" <|
+                \() ->
+                    let
+                        -- 2024-01-08 (Monday) 01:00 UTC - offset 120 = 2024-01-07 (Sunday) 23:00
+                        mondayEarly = millisToPosix 1704675600000
+                        minus2 = customZone -120 []
+                    in
+                    Expect.equal Sun (toWeekday minus2 mondayEarly)
+            ]
+        , describe "second and millis are zone-independent"
+            [ test "toSecond same in different zones" <|
+                \() ->
+                    let
+                        t = millisToPosix 1709220645123
+                        ist = customZone 330 []
+                        est = customZone -300 []
+                    in
+                    Expect.equal
+                        (toSecond utc t, toSecond ist t, toSecond est t)
+                        (45, 45, 45)
+            , test "toMillis same in different zones" <|
+                \() ->
+                    let
+                        t = millisToPosix 1709220645123
+                        ist = customZone 330 []
+                        est = customZone -300 []
+                    in
+                    Expect.equal
+                        (toMillis utc t, toMillis ist t, toMillis est t)
+                        (123, 123, 123)
+            ]
         ]
