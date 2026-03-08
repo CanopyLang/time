@@ -1,6 +1,8 @@
 module Test.Time exposing (main, tests)
 
 import Basics exposing (..)
+import List
+import String
 import Time exposing (..)
 import Test exposing (..)
 import Expect
@@ -19,6 +21,13 @@ tests =
         , monthTests
         , weekdayTests
         , customZoneTests
+        , epochBoundaryTests
+        , halfHourOffsetTests
+        , zoneNameTests
+        , dayRolloverTests
+        , preEpochTests
+        , monthCorrectnessTests
+        , weekdayCorrectnessTests
         ]
 
 
@@ -115,6 +124,30 @@ monthTests =
                     months = [Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec]
                 in
                 Expect.equal 12 (List.length months)
+        , test "each month extracted from a known date is correct" <|
+            \() ->
+                -- Verify each month maps to its own value by extracting from known timestamps
+                -- 2024-01-15, 2024-02-15, ... 2024-12-15 (all at 12:00 UTC)
+                let
+                    monthsFromDates =
+                        List.map (\t -> toMonth utc (millisToPosix t))
+                            [ 1705320000000  -- 2024-01-15 12:00 UTC
+                            , 1707998400000  -- 2024-02-15 12:00 UTC
+                            , 1710504000000  -- 2024-03-15 12:00 UTC
+                            , 1713182400000  -- 2024-04-15 12:00 UTC
+                            , 1715774400000  -- 2024-05-15 12:00 UTC
+                            , 1718452800000  -- 2024-06-15 12:00 UTC
+                            , 1721044800000  -- 2024-07-15 12:00 UTC
+                            , 1723723200000  -- 2024-08-15 12:00 UTC
+                            , 1726401600000  -- 2024-09-15 12:00 UTC
+                            , 1728993600000  -- 2024-10-15 12:00 UTC
+                            , 1731672000000  -- 2024-11-15 12:00 UTC
+                            , 1734264000000  -- 2024-12-15 12:00 UTC
+                            ]
+                in
+                Expect.equal
+                    [Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec]
+                    monthsFromDates
         ]
 
 
@@ -127,6 +160,24 @@ weekdayTests =
                     days = [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
                 in
                 Expect.equal 7 (List.length days)
+        , test "each weekday extracted from consecutive days is correct" <|
+            \() ->
+                -- 2024-01-01 (Mon) through 2024-01-07 (Sun), all at 12:00 UTC
+                let
+                    weekdaysFromDates =
+                        List.map (\t -> toWeekday utc (millisToPosix t))
+                            [ 1704110400000  -- 2024-01-01 12:00 UTC (Mon)
+                            , 1704196800000  -- 2024-01-02 12:00 UTC (Tue)
+                            , 1704283200000  -- 2024-01-03 12:00 UTC (Wed)
+                            , 1704369600000  -- 2024-01-04 12:00 UTC (Thu)
+                            , 1704456000000  -- 2024-01-05 12:00 UTC (Fri)
+                            , 1704542400000  -- 2024-01-06 12:00 UTC (Sat)
+                            , 1704628800000  -- 2024-01-07 12:00 UTC (Sun)
+                            ]
+                in
+                Expect.equal
+                    [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+                    weekdaysFromDates
         , describe "known weekdays"
             [ test "2024-01-01 is Monday" <|
                 \() -> Expect.equal Mon (toWeekday utc (millisToPosix 1704067200000))
@@ -135,6 +186,44 @@ weekdayTests =
             , test "2024-01-07 is Sunday" <|
                 \() -> Expect.equal Sun (toWeekday utc (millisToPosix 1704585600000))
             ]
+        ]
+
+
+
+-- EPOCH BOUNDARY
+
+
+epochBoundaryTests : Test
+epochBoundaryTests =
+    describe "Epoch boundary"
+        [ test "timestamp 0 year is 1970" <|
+            \() -> Expect.equal 1970 (toYear utc (millisToPosix 0))
+        , test "timestamp 0 month is Jan" <|
+            \() -> Expect.equal Jan (toMonth utc (millisToPosix 0))
+        , test "timestamp 0 day is 1" <|
+            \() -> Expect.equal 1 (toDay utc (millisToPosix 0))
+        , test "timestamp 0 weekday is Thu" <|
+            \() -> Expect.equal Thu (toWeekday utc (millisToPosix 0))
+        , test "timestamp 0 hour is 0" <|
+            \() -> Expect.equal 0 (toHour utc (millisToPosix 0))
+        , test "timestamp 0 minute is 0" <|
+            \() -> Expect.equal 0 (toMinute utc (millisToPosix 0))
+        , test "timestamp 0 second is 0" <|
+            \() -> Expect.equal 0 (toSecond utc (millisToPosix 0))
+        , test "timestamp 0 millis is 0" <|
+            \() -> Expect.equal 0 (toMillis utc (millisToPosix 0))
+        , test "timestamp 1 millisecond after epoch" <|
+            \() ->
+                let
+                    t = millisToPosix 1
+                in
+                Expect.equal (0, 0, 1) (toHour utc t, toMinute utc t, toMillis utc t)
+        , test "one second after epoch" <|
+            \() ->
+                let
+                    t = millisToPosix 1000
+                in
+                Expect.equal (0, 0, 1) (toHour utc t, toMinute utc t, toSecond utc t)
         ]
 
 
@@ -167,4 +256,317 @@ customZoneTests =
                 \() -> Expect.equal 30 (toMinute est time)
              ]
             )
+        , describe "non-empty eras (DST-like transitions)"
+            (let
+                -- Zone that switches offset at a given time:
+                -- Before era start (minute 28440960 = 2024-02-01 00:00 UTC): default offset +60 (CET)
+                -- After era start: offset +120 (CEST, summer time)
+                dstZone = customZone 60
+                    [ { start = 28440960, offset = 120 } ]
+                -- A time well after the era start: 2024-03-31 12:00 UTC = minute 28524000
+                summerTime = millisToPosix 1711886400000
+                -- A time before the era start: 2024-01-15 12:00 UTC = minute 28417920
+                winterTime = millisToPosix 1705320000000
+             in
+             [ test "summer time uses era offset (+2h)" <|
+                \() -> Expect.equal 14 (toHour dstZone summerTime)
+             , test "winter time uses default offset (+1h)" <|
+                \() -> Expect.equal 13 (toHour dstZone winterTime)
+             ]
+            )
+        ]
+
+
+
+-- HALF-HOUR OFFSET ZONE
+
+
+halfHourOffsetTests : Test
+halfHourOffsetTests =
+    describe "Half-hour offset zones"
+        [ describe "UTC+5:45 (Nepal Time)"
+            (let
+                -- 345 minutes = 5 hours 45 minutes
+                npt = customZone 345 []
+                -- 2024-01-15 12:00:00 UTC
+                time = millisToPosix 1705320000000
+             in
+             [ test "NPT hour is 17" <|
+                \() -> Expect.equal 17 (toHour npt time)
+             , test "NPT minute is 45" <|
+                \() -> Expect.equal 45 (toMinute npt time)
+             ]
+            )
+        , describe "UTC+9:30 (Australian Central Standard Time)"
+            (let
+                acst = customZone 570 []
+                -- 2024-01-15 12:00:00 UTC
+                time = millisToPosix 1705320000000
+             in
+             [ test "ACST hour is 21" <|
+                \() -> Expect.equal 21 (toHour acst time)
+             , test "ACST minute is 30" <|
+                \() -> Expect.equal 30 (toMinute acst time)
+             ]
+            )
+        ]
+
+
+
+-- ZONE NAME
+
+
+zoneNameTests : Test
+zoneNameTests =
+    describe "ZoneName type"
+        [ test "Name constructor wraps a string" <|
+            \() ->
+                let
+                    zoneName = Name "Europe/Moscow"
+                in
+                case zoneName of
+                    Name n ->
+                        Expect.equal "Europe/Moscow" n
+                    Offset _ ->
+                        Expect.fail "Expected Name, got Offset"
+        , test "Offset constructor wraps an int" <|
+            \() ->
+                let
+                    zoneName = Offset 180
+                in
+                case zoneName of
+                    Name _ ->
+                        Expect.fail "Expected Offset, got Name"
+                    Offset o ->
+                        Expect.equal 180 o
+        , test "Name and Offset are distinct" <|
+            \() ->
+                let
+                    name = Name "UTC"
+                    offset = Offset 0
+                in
+                Expect.notEqual (zoneNameToString name) (zoneNameToString offset)
+        ]
+
+
+zoneNameToString : ZoneName -> String
+zoneNameToString zn =
+    case zn of
+        Name n -> "Name:" ++ n
+        Offset o -> "Offset:" ++ String.fromInt o
+
+
+
+-- DAY ROLLOVER
+
+
+dayRolloverTests : Test
+dayRolloverTests =
+    describe "Day rollover with positive offset"
+        [ test "23:00 UTC + offset 120 rolls day to 16" <|
+            \() ->
+                let
+                    -- 2024-01-15 23:00:00 UTC
+                    lateNight = millisToPosix 1705359600000
+                    plus2 = customZone 120 []
+                in
+                Expect.equal 16 (toDay plus2 lateNight)
+        , test "23:00 UTC + offset 120 rolls hour to 1" <|
+            \() ->
+                let
+                    lateNight = millisToPosix 1705359600000
+                    plus2 = customZone 120 []
+                in
+                Expect.equal 1 (toHour plus2 lateNight)
+        , test "23:30 UTC + offset 330 rolls day to 16" <|
+            \() ->
+                let
+                    -- 2024-01-15 23:30:00 UTC
+                    lateNight = millisToPosix 1705361400000
+                    ist = customZone 330 []
+                in
+                Expect.equal 16 (toDay ist lateNight)
+        , test "23:30 UTC + offset 330 rolls hour to 5" <|
+            \() ->
+                let
+                    lateNight = millisToPosix 1705361400000
+                    ist = customZone 330 []
+                in
+                Expect.equal 5 (toHour ist lateNight)
+        , test "midnight boundary: 23:59 UTC + offset 1 rolls day to 16" <|
+            \() ->
+                let
+                    -- 2024-01-15 23:59:00 UTC
+                    almostMidnight = millisToPosix 1705363140000
+                    plus1min = customZone 1 []
+                in
+                Expect.equal 16 (toDay plus1min almostMidnight)
+        , test "midnight boundary: 23:59 UTC + offset 1 rolls hour to 0" <|
+            \() ->
+                let
+                    almostMidnight = millisToPosix 1705363140000
+                    plus1min = customZone 1 []
+                in
+                Expect.equal 0 (toHour plus1min almostMidnight)
+        , test "negative offset rolls day backward" <|
+            \() ->
+                let
+                    -- 2024-01-16 00:30:00 UTC
+                    earlyMorning = millisToPosix 1705365000000
+                    minus2 = customZone -120 []
+                in
+                Expect.equal 15 (toDay minus2 earlyMorning)
+        , test "negative offset rolls hour backward" <|
+            \() ->
+                let
+                    earlyMorning = millisToPosix 1705365000000
+                    minus2 = customZone -120 []
+                in
+                Expect.equal 22 (toHour minus2 earlyMorning)
+        ]
+
+
+
+-- PRE-EPOCH DATES
+
+
+preEpochTests : Test
+preEpochTests =
+    describe "Pre-epoch dates (negative milliseconds)"
+        [ test "1960-06-15 12:00 UTC year is 1960" <|
+            \() ->
+                -- 1960-06-15 12:00:00 UTC = -301233600000 ms
+                Expect.equal 1960 (toYear utc (millisToPosix -301233600000))
+        , test "1960-06-15 12:00 UTC month is Jun" <|
+            \() ->
+                Expect.equal Jun (toMonth utc (millisToPosix -301233600000))
+        , test "1960-06-15 12:00 UTC day is 15" <|
+            \() ->
+                Expect.equal 15 (toDay utc (millisToPosix -301233600000))
+        , test "1960-06-15 12:00 UTC hour is 12" <|
+            \() ->
+                Expect.equal 12 (toHour utc (millisToPosix -301233600000))
+        , test "1969-12-31 23:59:59 UTC year" <|
+            \() ->
+                Expect.equal 1969 (toYear utc (millisToPosix -1))
+        , test "1969-12-31 23:59:59 UTC month" <|
+            \() ->
+                Expect.equal Dec (toMonth utc (millisToPosix -1))
+        , test "1969-12-31 23:59:59 UTC day" <|
+            \() ->
+                Expect.equal 31 (toDay utc (millisToPosix -1))
+        , test "1969-12-31 23:59:59 UTC time" <|
+            \() ->
+                Expect.equal
+                    ( 23, 59, 59 )
+                    ( toHour utc (millisToPosix -1)
+                    , toMinute utc (millisToPosix -1)
+                    , toSecond utc (millisToPosix -1)
+                    )
+        , test "negative millis round-trip" <|
+            \() ->
+                Expect.equal -301233600000 (posixToMillis (millisToPosix -301233600000))
+        , test "pre-epoch with positive timezone offset year" <|
+            \() ->
+                let
+                    t = millisToPosix -3600000
+                    plus2 = customZone 120 []
+                in
+                Expect.equal 1970 (toYear plus2 t)
+        , test "pre-epoch with positive timezone offset date" <|
+            \() ->
+                let
+                    t = millisToPosix -3600000
+                    plus2 = customZone 120 []
+                in
+                Expect.equal
+                    ( Jan, 1, 1 )
+                    ( toMonth plus2 t, toDay plus2 t, toHour plus2 t )
+        , test "1900-01-01 12:00 UTC year and month" <|
+            \() ->
+                let
+                    t = millisToPosix -2208945600000
+                in
+                Expect.equal ( 1900, Jan ) ( toYear utc t, toMonth utc t )
+        , test "1900-01-01 12:00 UTC day and hour" <|
+            \() ->
+                let
+                    t = millisToPosix -2208945600000
+                in
+                Expect.equal ( 1, 12 ) ( toDay utc t, toHour utc t )
+        ]
+
+
+
+-- MONTH CORRECTNESS
+
+
+monthCorrectnessTests : Test
+monthCorrectnessTests =
+    describe "Month correctness (specific known dates)"
+        [ test "2000-03-01 is Mar (leap year boundary)" <|
+            \() ->
+                -- 2000-03-01 00:00:00 UTC = 951868800000 ms
+                Expect.equal Mar (toMonth utc (millisToPosix 951868800000))
+        , test "2000-02-29 exists (leap year)" <|
+            \() ->
+                -- 2000-02-29 12:00:00 UTC = 951825600000 ms
+                Expect.equal
+                    ( Feb, 29 )
+                    ( toMonth utc (millisToPosix 951825600000)
+                    , toDay utc (millisToPosix 951825600000)
+                    )
+        , test "1900-02-28 is last day of Feb (1900 is not a leap year)" <|
+            \() ->
+                -- 1900-02-28 12:00:00 UTC = -2203934400000 ms
+                Expect.equal
+                    ( Feb, 28 )
+                    ( toMonth utc (millisToPosix -2203934400000)
+                    , toDay utc (millisToPosix -2203934400000)
+                    )
+        , test "1900-03-01 follows Feb 28 (no Feb 29 in 1900)" <|
+            \() ->
+                -- 1900-03-01 12:00:00 UTC = -2203848000000 ms
+                Expect.equal
+                    ( Mar, 1 )
+                    ( toMonth utc (millisToPosix -2203848000000)
+                    , toDay utc (millisToPosix -2203848000000)
+                    )
+        , test "2024-12-31 is Dec 31" <|
+            \() ->
+                -- 2024-12-31 12:00:00 UTC = 1735646400000 ms
+                Expect.equal
+                    ( Dec, 31 )
+                    ( toMonth utc (millisToPosix 1735646400000)
+                    , toDay utc (millisToPosix 1735646400000)
+                    )
+        ]
+
+
+
+-- WEEKDAY CORRECTNESS
+
+
+weekdayCorrectnessTests : Test
+weekdayCorrectnessTests =
+    describe "Weekday correctness (specific known dates)"
+        [ test "1970-01-01 (epoch) is Thursday" <|
+            \() ->
+                Expect.equal Thu (toWeekday utc (millisToPosix 0))
+        , test "2000-01-01 is Saturday" <|
+            \() ->
+                -- 2000-01-01 12:00:00 UTC = 946728000000 ms
+                Expect.equal Sat (toWeekday utc (millisToPosix 946728000000))
+        , test "1969-12-31 is Wednesday" <|
+            \() ->
+                -- 1969-12-31 12:00:00 UTC = -43200000 ms
+                Expect.equal Wed (toWeekday utc (millisToPosix -43200000))
+        , test "2024-02-29 (leap day) is Thursday" <|
+            \() ->
+                -- 2024-02-29 12:00:00 UTC = 1709208000000 ms
+                Expect.equal Thu (toWeekday utc (millisToPosix 1709208000000))
+        , test "2025-01-01 is Wednesday" <|
+            \() ->
+                -- 2025-01-01 12:00:00 UTC = 1735732800000 ms
+                Expect.equal Wed (toWeekday utc (millisToPosix 1735732800000))
         ]
