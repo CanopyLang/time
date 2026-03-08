@@ -470,7 +470,7 @@ onEffects router subs {processes} =
       ( spawns, Dict.insert interval id existing, kills )
 
     rightStep _ id (spawns, existing, kills) =
-      ( spawns, existing, Task.andThen (\_ -> kills) (Process.kill id) )
+      ( spawns, existing, Task.andThen (always kills) (Process.kill id) )
 
     (spawnList, existingDict, killTask) =
       Dict.merge
@@ -482,8 +482,8 @@ onEffects router subs {processes} =
         ([], Dict.empty, Task.succeed ())
   in
     killTask
-      |> Task.andThen (\_ -> spawnHelp router spawnList existingDict)
-      |> Task.andThen (\newProcesses -> Task.succeed (State newTaggers newProcesses))
+      |> Task.andThen (always (spawnHelp router spawnList existingDict))
+      |> Task.andThen (Task.succeed << State newTaggers)
 
 
 addMySub : MySub msg -> Taggers msg -> Taggers msg
@@ -527,7 +527,7 @@ onSelfMsg router interval state =
       in
         now
           |> Task.andThen tellTaggers
-          |> Task.andThen (\_ -> Task.succeed state)
+          |> Task.andThen (always (Task.succeed state))
 
 
 setInterval : Float -> Task Never () -> Task x Never

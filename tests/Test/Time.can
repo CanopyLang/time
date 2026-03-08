@@ -585,7 +585,7 @@ subscriptionTests =
         [ test "every produces a Sub" <|
             \() ->
                 let
-                    sub = every 1000 (\t -> posixToMillis t)
+                    sub = every 1000 posixToMillis
                 in
                 -- We cannot inspect the Sub, but we can verify it was constructed
                 -- without error by checking a known value alongside it
