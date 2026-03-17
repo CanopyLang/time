@@ -1,0 +1,70 @@
+module Main exposing (main)
+
+{-| A minimal Browser.element application that exercises the Time effect
+manager. When initialized by the test harness, Time.every starts a subscription
+that causes the Time effect manager's init, onEffects, and onSelfMsg functions
+to execute.
+-}
+
+import Browser
+import Html exposing (Html, div, text)
+import Html.Attributes exposing (id)
+import Platform.Sub
+import String
+import Task
+import Time
+
+
+type alias Model =
+    { tickCount : Int
+    }
+
+
+type Msg
+    = Tick Time.Posix
+
+
+main : Program () Model Msg
+main =
+    Browser.element
+        { init = init
+        , update = update
+        , subscriptions = subscriptions
+        , view = view
+        }
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( Model 0
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    let
+        newCount =
+            case msg of
+                Tick _ ->
+                    model.tickCount + 1
+    in
+    ( { model | tickCount = newCount }
+    , Cmd.none
+    )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    if model.tickCount < 3 then
+        Time.every 100 Tick
+    else
+        Platform.Sub.none
+
+
+view : Model -> Html Msg
+view model =
+    div [ id "time-app" ]
+        [ div [ id "tick-count" ]
+            [ text (String.fromInt model.tickCount) ]
+        ]

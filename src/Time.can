@@ -272,7 +272,8 @@ toSecond _ time =
   modBy 60 (flooredDiv (posixToMillis time) 1000)
 
 
-{-|
+{-| What millisecond is it? (From 0 to 999)
+
     import Time exposing (toMillis, utc, millisToPosix)
 
     toMillis utc (millisToPosix    0) == 0
@@ -411,8 +412,8 @@ type Month = Jan | Feb | Mar | Apr | May | Jun | Jul | Aug | Sep | Oct | Nov | D
 interval in milliseconds (like `1000` for a second or `60 * 1000` for a minute
 or `60 * 60 * 1000` for an hour) and that is how often you get a new time!
 
-Check out [this example](https://elm-lang.org/examples/time) to see how to use
-it in an application.
+Check out the Canopy documentation for examples of how to use this in an
+application.
 
 **This function is not for animation.** Use the [`onAnimationFrame`][af]
 function for that sort of thing! It syncs up with repaints and will end up
@@ -470,7 +471,7 @@ onEffects router subs {processes} =
       ( spawns, Dict.insert interval id existing, kills )
 
     rightStep _ id (spawns, existing, kills) =
-      ( spawns, existing, Task.andThen (always kills) (Process.kill id) )
+      ( spawns, existing, Task.andThen (continueKills kills) (Process.kill id) )
 
     (spawnList, existingDict, killTask) =
       Dict.merge
@@ -482,8 +483,8 @@ onEffects router subs {processes} =
         ([], Dict.empty, Task.succeed ())
   in
     killTask
-      |> Task.andThen (always (spawnHelp router spawnList existingDict))
-      |> Task.andThen (Task.succeed << State newTaggers)
+      |> Task.andThen (startSpawning router spawnList existingDict)
+      |> Task.andThen (succeedWithTaggers newTaggers)
 
 
 addMySub : MySub msg -> Taggers msg -> Taggers msg
@@ -523,11 +524,41 @@ onSelfMsg router interval state =
     Just taggers ->
       let
         tellTaggers time =
-          Task.sequence (List.map (\tagger -> Platform.sendToApp router (tagger time)) taggers)
+          Task.sequence (List.map (sendTagger router time) taggers)
       in
         now
           |> Task.andThen tellTaggers
-          |> Task.andThen (always (Task.succeed state))
+          |> Task.andThen (returnState state)
+
+
+{-| Apply a tagger to a time value and send the result to the app. -}
+sendTagger : Platform.Router msg Float -> Posix -> (Posix -> msg) -> Task Never ()
+sendTagger router time tagger =
+  Platform.sendToApp router (tagger time)
+
+
+{-| Return the current state, discarding the input value. -}
+returnState : State msg -> a -> Task Never (State msg)
+returnState state _ =
+  Task.succeed state
+
+
+{-| Continue the kill chain by ignoring the result and proceeding with remaining kills. -}
+continueKills : Task Never () -> a -> Task Never ()
+continueKills kills _ =
+  kills
+
+
+{-| After killing old processes, start spawning new interval timers. -}
+startSpawning : Platform.Router msg Float -> List Float -> Processes -> a -> Task.Task x Processes
+startSpawning router spawnList existingDict _ =
+  spawnHelp router spawnList existingDict
+
+
+{-| Wrap processes into a complete State with the given taggers. -}
+succeedWithTaggers : Taggers msg -> Processes -> Task Never (State msg)
+succeedWithTaggers taggers processes =
+  Task.succeed (State taggers processes)
 
 
 setInterval : Float -> Task Never () -> Task x Never

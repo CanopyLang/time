@@ -1,0 +1,39 @@
+module TimeBrowser exposing (main)
+
+{-| Browser execution tests for the Time module. This module triggers the
+BrowserTestMain pipeline, which runs tests in a real browser. The test-app
+Main module is also initialized by the harness, exercising the Time effect
+manager (init, onEffects, onSelfMsg).
+-}
+
+import Main
+import Task
+import Time
+import Test exposing (BrowserTest, inBrowser, Test, describe, asyncTest)
+import Expect
+
+
+main : BrowserTest
+main =
+    inBrowser
+        [ timeAsyncTests
+        ]
+
+
+timeAsyncTests : Test
+timeAsyncTests =
+    describe "Time async operations"
+        [ asyncTest "Time.now returns a valid posix time"
+            (Time.now
+                |> Task.map (\posix ->
+                    Expect.true "posix millis > 0"
+                        (Time.posixToMillis posix > 0)))
+        , asyncTest "Time.here returns a zone"
+            (Time.here
+                |> Task.map (\zone ->
+                    let
+                        hour = Time.toHour zone (Time.millisToPosix 0)
+                    in
+                    Expect.true "hour is valid (0-23)"
+                        (hour >= 0 && hour <= 23)))
+        ]

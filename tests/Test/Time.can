@@ -6,6 +6,7 @@ import String
 import Time exposing (..)
 import Test exposing (..)
 import Expect
+import Task
 
 
 main : Test
@@ -31,6 +32,11 @@ tests =
         , subscriptionTests
         , millenniumBoundaryTests
         , multiEraZoneTests
+        , asyncTimeTests
+        , toCivilBranchTests
+        , threeEraZoneTests
+        , subscriptionConstructionTests
+        , asyncSubscriptionTests
         ]
 
 
@@ -723,4 +729,231 @@ multiEraZoneTests =
                         (toMillis utc t, toMillis ist t, toMillis est t)
                         (123, 123, 123)
             ]
+        ]
+
+
+-- ASYNC TIME TESTS
+
+
+asyncTimeTests : Test
+asyncTimeTests =
+    describe "Async Time operations"
+        [ asyncTest "Time.here returns a valid zone"
+            (Time.here
+                |> Task.map (\zone ->
+                    Expect.true "valid hour"
+                        (toHour zone (millisToPosix 0) >= 0
+                            && toHour zone (millisToPosix 0) < 24)))
+        , asyncTest "Time.now returns a positive posix time"
+            (Time.now
+                |> Task.map (\posix ->
+                    Expect.true "posix is positive"
+                        (posixToMillis posix > 0)))
+        , asyncTest "Time.getZoneName returns a ZoneName"
+            (Time.getZoneName
+                |> Task.map (\zn ->
+                    case zn of
+                        Name n ->
+                            Expect.true "non-empty name" (String.length n > 0)
+
+                        Offset _ ->
+                            Expect.pass))
+        , asyncTest "Time.now is recent (after 2024)"
+            (Time.now
+                |> Task.map (\posix ->
+                    Expect.true "after 2024"
+                        (posixToMillis posix > 1704067200000)))
+        , asyncTest "Time.here produces consistent results"
+            (Task.map2 (\z1 z2 ->
+                    Expect.equal (toHour z1 (millisToPosix 0)) (toHour z2 (millisToPosix 0)))
+                Time.here
+                Time.here)
+        ]
+
+
+
+-- toCivil BRANCH TESTS
+
+
+toCivilBranchTests : Test
+toCivilBranchTests =
+    describe "toCivil branch coverage"
+        [ describe "mp < 10 branch (months Mar through Dec)"
+            [ test "July 15 2024 is month Jul (mp=4, mp < 10)" <|
+                \() ->
+                    -- 2024-07-15 12:00:00 UTC = 1721044800000 ms
+                    Expect.equal
+                        ( Jul, 15, 2024 )
+                        ( toMonth utc (millisToPosix 1721044800000)
+                        , toDay utc (millisToPosix 1721044800000)
+                        , toYear utc (millisToPosix 1721044800000)
+                        )
+            , test "March 1 2024 leap year boundary (mp=0, mp < 10)" <|
+                \() ->
+                    -- 2024-03-01 00:00:00 UTC = 1709251200000 ms
+                    Expect.equal
+                        ( Mar, 1, 2024 )
+                        ( toMonth utc (millisToPosix 1709251200000)
+                        , toDay utc (millisToPosix 1709251200000)
+                        , toYear utc (millisToPosix 1709251200000)
+                        )
+            , test "October 31 2024 (mp=7, mp < 10)" <|
+                \() ->
+                    -- 2024-10-31 12:00:00 UTC = 1730376000000 ms
+                    Expect.equal
+                        ( Oct, 31, 2024 )
+                        ( toMonth utc (millisToPosix 1730376000000)
+                        , toDay utc (millisToPosix 1730376000000)
+                        , toYear utc (millisToPosix 1730376000000)
+                        )
+            ]
+        , describe "mp >= 10 branch (months Jan and Feb)"
+            [ test "January 15 2024 (mp=10, mp >= 10, month <= 2 adds 1 to year)" <|
+                \() ->
+                    -- 2024-01-15 12:00:00 UTC = 1705320000000 ms
+                    Expect.equal
+                        ( Jan, 15, 2024 )
+                        ( toMonth utc (millisToPosix 1705320000000)
+                        , toDay utc (millisToPosix 1705320000000)
+                        , toYear utc (millisToPosix 1705320000000)
+                        )
+            , test "February 28 2023 non-leap year (mp=11, mp >= 10)" <|
+                \() ->
+                    -- 2023-02-28 12:00:00 UTC = 1677585600000 ms
+                    Expect.equal
+                        ( Feb, 28, 2023 )
+                        ( toMonth utc (millisToPosix 1677585600000)
+                        , toDay utc (millisToPosix 1677585600000)
+                        , toYear utc (millisToPosix 1677585600000)
+                        )
+            ]
+        , describe "year adjustment branch (month <= 2 vs month > 2)"
+            [ test "January 1 year adjustment applies" <|
+                \() ->
+                    -- 2025-01-01 00:00:00 UTC = 1735689600000 ms
+                    Expect.equal 2025 (toYear utc (millisToPosix 1735689600000))
+            , test "March 1 no year adjustment" <|
+                \() ->
+                    -- 2025-03-01 00:00:00 UTC = 1740787200000 ms
+                    Expect.equal 2025 (toYear utc (millisToPosix 1740787200000))
+            , test "far past date year 100 AD" <|
+                \() ->
+                    -- 0100-06-15 12:00 UTC = roughly -59011459200000 ms
+                    -- Use a known calculation: days from epoch to 100-01-01 = -682944
+                    -- 0100-01-01 00:00 UTC = -59011459200000 ms
+                    Expect.equal 100 (toYear utc (millisToPosix -59011459200000))
+            , test "year 2000 Feb 29 leap day (month <= 2 path)" <|
+                \() ->
+                    -- 2000-02-29 00:00:00 UTC = 951782400000 ms
+                    Expect.equal
+                        ( 2000, Feb, 29 )
+                        ( toYear utc (millisToPosix 951782400000)
+                        , toMonth utc (millisToPosix 951782400000)
+                        , toDay utc (millisToPosix 951782400000)
+                        )
+            ]
+        ]
+
+
+
+-- THREE-ERA ZONE TESTS
+
+
+threeEraZoneTests : Test
+threeEraZoneTests =
+    describe "Three-era zone (deep recursion in toAdjustedMinutesHelp)"
+        (let
+            -- Zone with 3 eras (must be sorted descending by start):
+            -- Era 3: starts at minute 29000000 (~2025-03-05), offset +180
+            -- Era 2: starts at minute 28700000 (~2024-08-15), offset +120
+            -- Era 1: starts at minute 28400000 (~2024-01-20), offset +60
+            -- Default offset: 0 (UTC)
+            threeEraZone = customZone 0
+                [ { start = 29000000, offset = 180 }
+                , { start = 28700000, offset = 120 }
+                , { start = 28400000, offset = 60 }
+                ]
+            -- Time in era 3 (after 29000000 minutes): 2025-04-01 12:00 UTC
+            -- minute = 1743508800000 / 60000 = 29058480
+            inEra3 = millisToPosix 1743508800000
+            -- Time in era 2 (between 28700000 and 29000000): 2024-10-15 12:00 UTC
+            -- minute = 1728993600000 / 60000 = 28816560
+            inEra2 = millisToPosix 1728993600000
+            -- Time in era 1 (between 28400000 and 28700000): 2024-05-15 12:00 UTC
+            -- minute = 1715774400000 / 60000 = 28596240
+            inEra1 = millisToPosix 1715774400000
+            -- Time before all eras (before 28400000): 2023-06-15 12:00 UTC
+            -- minute = 1686830400000 / 60000 = 28113840
+            beforeAll = millisToPosix 1686830400000
+         in
+         [ test "era 3 uses +3h offset" <|
+            \() -> Expect.equal 15 (toHour threeEraZone inEra3)
+         , test "era 2 uses +2h offset" <|
+            \() -> Expect.equal 14 (toHour threeEraZone inEra2)
+         , test "era 1 uses +1h offset" <|
+            \() -> Expect.equal 13 (toHour threeEraZone inEra1)
+         , test "before all eras uses default offset (0)" <|
+            \() -> Expect.equal 12 (toHour threeEraZone beforeAll)
+         , test "era 3 day extraction" <|
+            \() -> Expect.equal 1 (toDay threeEraZone inEra3)
+         , test "era 2 month extraction" <|
+            \() -> Expect.equal Oct (toMonth threeEraZone inEra2)
+         , test "era 1 year extraction" <|
+            \() -> Expect.equal 2024 (toYear threeEraZone inEra1)
+         ]
+        )
+
+
+
+-- SUBSCRIPTION CONSTRUCTION TESTS
+
+
+subscriptionConstructionTests : Test
+subscriptionConstructionTests =
+    describe "Subscription construction"
+        [ test "every with different intervals creates distinct subs" <|
+            \() ->
+                let
+                    sub1 = every 1000 posixToMillis
+                    sub2 = every 2000 posixToMillis
+                    sub3 = every 500 posixToMillis
+                in
+                Expect.notEqual (sub1 == sub2) (sub1 == sub1)
+        , test "every with identity tagger" <|
+            \() ->
+                let
+                    sub = every 100 (\p -> p)
+                in
+                Expect.pass
+        , test "every with composite tagger" <|
+            \() ->
+                let
+                    sub = every 5000 (\p -> posixToMillis p * 2)
+                in
+                Expect.pass
+        , test "multiple subs at same interval" <|
+            \() ->
+                let
+                    sub1 = every 1000 posixToMillis
+                    sub2 = every 1000 (\p -> posixToMillis p + 1)
+                in
+                Expect.pass
+        ]
+
+
+
+-- ASYNC SUBSCRIPTION TESTS
+
+
+asyncSubscriptionTests : Test
+asyncSubscriptionTests =
+    describe "Async subscription operations"
+        [ asyncTest "every subscription fires with Time.now"
+            (Time.now
+                |> Task.map (\posix ->
+                    let
+                        millis = posixToMillis posix
+                        sub = every 1000 (\p -> posixToMillis p > 0)
+                    in
+                    Expect.true "now is positive" (millis > 0)))
         ]

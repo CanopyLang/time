@@ -88,7 +88,7 @@ var getZoneName = F2(function(nameTag, offsetTag)
 		}
 		catch (e)
 		{
-			var name = offsetTag(new Date().getTimezoneOffset());
+			var name = offsetTag(-(new Date().getTimezoneOffset()));
 		}
 		callback(_Scheduler_succeed(name));
 	});
